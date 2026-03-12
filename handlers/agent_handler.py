@@ -14,7 +14,7 @@ from telegram.ext import (
     ContextTypes, ConversationHandler, CallbackQueryHandler,
     CommandHandler, MessageHandler, filters
 )
-from telegram.error import TelegramError
+from telegram.error import TelegramError, BadRequest
 
 from storage.case_store import (
     get_active_case_for_agent,
@@ -74,12 +74,22 @@ def _active_case_keyboard(case_id, status="assigned"):
     ]])
 
 
-async def _delete_after(bot, chat_id, message_id, seconds):
-    await asyncio.sleep(seconds)
+async def _safe_delete_message(bot, chat_id, message_id):
     try:
         await bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except BadRequest as e:
+        # Expected noisy cases in Telegram API
+        msg = str(e).lower()
+        if "message to delete not found" in msg or "message can't be deleted" in msg:
+            return
+        logger.warning(f"Delete message bad request: {e}")
     except TelegramError:
         pass
+
+
+async def _delete_after(bot, chat_id, message_id, seconds):
+    await asyncio.sleep(seconds)
+    await _safe_delete_message(bot, chat_id, message_id)
 
 
 # ── /mycases ──────────────────────────────────────────────────────────────────
@@ -194,10 +204,7 @@ async def cb_hist_delete_chat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     msg_ids = ctx.user_data.pop("history_msg_ids", [])
     msg_ids.append(query.message.message_id)
     for mid in msg_ids:
-        try:
-            await ctx.bot.delete_message(chat_id=chat_id, message_id=mid)
-        except TelegramError:
-            pass
+        await _safe_delete_message(ctx.bot, chat_id, mid)
 
 
 # ── Report (Solve) flow ───────────────────────────────────────────────────────
@@ -303,7 +310,7 @@ async def cb_solve_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"Note: {solution}",
         reply_markup=None
     )
-    asyncio.create_task(_delete_after(query.bot, query.message.chat_id, query.message.message_id, 6))
+    asyncio.create_task(_delete_after(ctx.bot, query.message.chat_id, query.message.message_id, 6))
 
     # Show remaining active cases after delay
     async def _show_remaining():
@@ -314,7 +321,7 @@ async def cb_solve_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if active_only:
             for c in active_only:
                 try:
-                    await query.bot.send_message(
+                    await ctx.bot.send_message(
                         agent_id, _active_case_text(c),
                         parse_mode="Markdown",
                         reply_markup=_active_case_keyboard(c["id"], c.get("status", "assigned"))
@@ -323,7 +330,7 @@ async def cb_solve_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     pass
         else:
             try:
-                await query.bot.send_message(agent_id, "✅ No more active cases. You are free!")
+                await ctx.bot.send_message(agent_id, "✅ No more active cases. You are free!")
             except TelegramError:
                 pass
 
@@ -451,7 +458,7 @@ async def cb_close_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"Reason: {reason}",
         reply_markup=None
     )
-    asyncio.create_task(_delete_after(query.bot, query.message.chat_id, query.message.message_id, 6))
+    asyncio.create_task(_delete_after(ctx.bot, query.message.chat_id, query.message.message_id, 6))
 
     async def _show_remaining():
         await asyncio.sleep(6)
@@ -461,7 +468,7 @@ async def cb_close_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if active_only:
             for c in active_only:
                 try:
-                    await query.bot.send_message(
+                    await ctx.bot.send_message(
                         agent_id, _active_case_text(c),
                         parse_mode="Markdown",
                         reply_markup=_active_case_keyboard(c["id"], c.get("status", "assigned"))
@@ -470,7 +477,7 @@ async def cb_close_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     pass
         else:
             try:
-                await query.bot.send_message(agent_id, "✅ No more active cases. You are free!")
+                await ctx.bot.send_message(agent_id, "✅ No more active cases. You are free!")
             except TelegramError:
                 pass
 
@@ -589,6 +596,6 @@ def get_solve_conversation():
             ],
         },
         fallbacks=[CommandHandler("cancel", cmd_solve_cancel)],
-        per_message=False,
+        per_message=True,
         allow_reentry=True,
     )

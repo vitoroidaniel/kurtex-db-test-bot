@@ -627,7 +627,7 @@ def get_report_conversation():
                                ],
         },
         fallbacks=[CommandHandler("cancel", cmd_cancel)],
-        per_message=False,
+        per_message=True,
         per_chat=False,
         per_user=True,
         allow_reentry=True,

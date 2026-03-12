@@ -4,6 +4,7 @@ Kurtex Alert Bot — Truck Maintenance Command Center
 
 import logging
 from telegram import Update
+from telegram.error import Conflict
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     CallbackQueryHandler, filters, TypeHandler,
@@ -159,6 +160,19 @@ async def cmd_help(update: Update, ctx):
     await update.message.reply_text(text)
 
 
+# ── Global error handler ──────────────────────────────────────────────────────
+
+async def on_error(update: object, ctx):
+    err = ctx.error
+    if isinstance(err, Conflict):
+        logger.warning(
+            "Telegram polling conflict detected (another instance is polling). "
+            "Ensure only one active bot instance for this token."
+        )
+        return
+    logger.exception("Unhandled exception while processing update", exc_info=err)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -172,6 +186,7 @@ def main():
     )
 
     app.bot_data["alert_handler"] = alert_h
+    app.add_error_handler(on_error)
 
     # Auth middleware — runs before everything
     app.add_handler(TypeHandler(Update, auth_middleware), group=-1)

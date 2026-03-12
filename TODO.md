@@ -1,9 +1,7 @@
 # TODO
 
-- [x] Refactor `storage/case_store.py` to strict DB-only mode for Railway (`DATABASE_URL` required).
-- [x] Add one-time migration script `scripts/migrate_cases_json_to_postgres.py`.
-- [x] Review references and remove legacy entrypoints (`bot_old.py`, `bot_new.py`, `bot_simple.py`) if unused.
-- [x] Review/update `railway.json` for clean production startup.
-- [x] Add deployment guide `docs/DEPLOYMENT.md` with env vars + migration/run steps.
-- [ ] Run critical-path verification commands and fix any issues.
-- [ ] Final cleanup pass and summary.
+- [x] Fix `CallbackQuery` bot access bug in `handlers/agent_handler.py` (`query.bot` -> context bot).
+- [x] Add safe delete wrappers to reduce expected Telegram 400 noise in logs.
+- [x] Update conversation handler settings in `handlers/agent_handler.py` and `handlers/report_handler.py` to remove PTB warnings.
+- [x] Add global PTB error handler in `bot.py` for cleaner exception logging.
+- [ ] Run quick static verification via search and summarize final fixes.
