@@ -300,8 +300,15 @@ async def cb_solve_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    close_case(case_id, notes=solution)
+    closed = close_case(case_id, notes=solution)
     case = get_case(case_id)
+
+    if not closed:
+        await query.edit_message_text(
+            "⚠️ Could not close this case. It may already be closed or unavailable.\nUse /mycases to refresh.",
+            reply_markup=None
+        )
+        return
 
     await query.edit_message_text(
         f"✅ Case closed!\n\n"
@@ -448,8 +455,15 @@ async def cb_close_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    close_case(case_id, notes=reason)
+    closed = close_case(case_id, notes=reason)
     case = get_case(case_id)
+
+    if not closed:
+        await query.edit_message_text(
+            "⚠️ Could not close this case. It may already be closed or unavailable.\nUse /mycases to refresh.",
+            reply_markup=None
+        )
+        return
 
     await query.edit_message_text(
         f"✅ Case closed!\n\n"
@@ -596,6 +610,6 @@ def get_solve_conversation():
             ],
         },
         fallbacks=[CommandHandler("cancel", cmd_solve_cancel)],
-        per_message=True,
+        per_message=False,
         allow_reentry=True,
     )

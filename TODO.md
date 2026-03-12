@@ -1,7 +1,6 @@
 # TODO
 
-- [x] Fix `CallbackQuery` bot access bug in `handlers/agent_handler.py` (`query.bot` -> context bot).
-- [x] Add safe delete wrappers to reduce expected Telegram 400 noise in logs.
-- [x] Update conversation handler settings in `handlers/agent_handler.py` and `handlers/report_handler.py` to remove PTB warnings.
-- [x] Add global PTB error handler in `bot.py` for cleaner exception logging.
-- [ ] Run quick static verification via search and summarize final fixes.
+- [x] Remove response time from reports-group assignment message in `handlers/alert_handler.py`.
+- [x] After assignment, send only short DM to agent ("assigned to you, use /mycases"), not full active-case card.
+- [x] Harden case action guard handling in `handlers/agent_handler.py` for missing/closed cases.
+- [ ] Run static verification and summarize behavior changes.

@@ -298,14 +298,11 @@ class AlertHandler:
         from shift_manager import MAIN_ADMIN_ID
         dest_id = cfg.REPORTS_GROUP_ID or MAIN_ADMIN_ID
         if dest_id:
-            created_at = record.get("created_at", datetime.now())
-            secs = int((datetime.now() - created_at).total_seconds())
             report = (
                 f"✅ *Case Assigned*\n\n"
                 f"📌 *Group:* {record.get('group_name', '—')}\n"
                 f"👤 *Driver:* {record.get('driver_name', '—')}\n"
                 f"🙋 *Handler:* {name}\n"
-                f"⏱ *Response:* {secs // 60}m {secs % 60}s\n"
                 f"📝 {record.get('text', '(no details)')}"
             )
             try:
@@ -360,23 +357,10 @@ class AlertHandler:
                 return
 
             if action in ("assign", "assignrpt"):
-                from storage.case_store import get_case as _get_case
-                case = _get_case(alert_id)
-                case_text = (
-                    f"📋 *Active Case*\n\n"
-                    f"📌 *Group:* {saved_record.get('group_name', '—')}\n"
-                    f"👤 *Driver:* {saved_record.get('driver_name', '—')}\n"
-                    f"📝 *Issue:* {(saved_record.get('text') or '—')[:200]}"
-                )
-                case_kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("✅ Solve",  callback_data=f"close_ask|{alert_id}"),
-                    InlineKeyboardButton("📋 Report", callback_data=f"solve|{alert_id}"),
-                ]])
                 try:
                     await ctx.bot.send_message(
-                        admin.id, case_text,
-                        parse_mode=ParseMode.MARKDOWN,
-                        reply_markup=case_kb,
+                        admin.id,
+                        "✅ Case has been assigned to you.\nUse /mycases to view and take action.",
                     )
                 except TelegramError:
                     pass
