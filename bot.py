@@ -4,7 +4,6 @@ Kurtex Alert Bot — Truck Maintenance Command Center
 
 import logging
 from telegram import Update
-from telegram.error import Conflict
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     CallbackQueryHandler, filters, TypeHandler,
@@ -12,7 +11,8 @@ from telegram.ext import (
 )
 
 from config import config
-from shifts import ADMINS, MAIN_ADMIN_ID
+from shift_manager import is_known_user as _is_known_user, get_user_role, MAIN_ADMIN_ID
+from roles import can_view_reports, ROLE_ICONS, ROLE_LABELS, SUPER_MENU_ROLES
 from handlers.alert_handler import AlertHandler, TRIGGER_WORDS
 from handlers.report_handler import get_report_conversation
 from handlers.agent_handler import (
@@ -23,8 +23,11 @@ from handlers.agent_handler import (
     cb_histpage, cb_hist_delete_chat, get_solve_conversation
 )
 from handlers.admin_handler import cmd_report, cmd_leaderboard, cmd_missed, _is_main_admin
+from handlers.user_handler import (
+    cmd_manageusers, cmd_listusers, cmd_adduser, cmd_removeuser, cmd_changerole,
+    cb_manage, recv_add_user, recv_add_user_name, cmd_cancel_add,
+)
 from handlers.scheduler import register_jobs
-from user_tracker import has_user_started, mark_user_started
 
 BOT_NAME    = "Kurtex Alert Bot"
 BOT_TAGLINE = "Truck Maintenance Command Center"
@@ -48,7 +51,7 @@ async def auth_middleware(update: Update, ctx):
         if msg and msg.text and msg.text.startswith("/"):
             raise ApplicationHandlerStop
         return
-    if user.id not in ADMINS and user.id != MAIN_ADMIN_ID:
+    if not _is_known_user(user.id):
         if update.message:
             await update.message.reply_text(
                 "You are not authorized to use this bot.\n"
@@ -60,8 +63,9 @@ async def auth_middleware(update: Update, ctx):
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 async def post_init(application: Application) -> None:
-    from shifts import SUPER_ADMINS
+    from storage.case_store import get_all_users
     from telegram import BotCommandScopeChat
+    from roles import can_manage_users
 
     base_commands = [
         ("start",       "Register with Kurtex Alert Bot"),
@@ -71,25 +75,36 @@ async def post_init(application: Application) -> None:
         ("casehistory", "Full closed case history"),
         ("help",        "Bot commands and help"),
     ]
-
-    super_commands = base_commands + [
+    elevated_commands = base_commands + [
         ("report",      "Daily summary"),
         ("leaderboard", "Top performers"),
         ("missed",      "Missed alerts"),
     ]
+    management_commands = elevated_commands + [
+        ("manageusers", "Manage users"),
+        ("adduser",     "Add a user"),
+        ("changerole",  "Change a user's role"),
+        ("removeuser",  "Remove a user"),
+        ("listusers",   "List all users"),
+    ]
 
-    # Default commands for all admins
     await application.bot.set_my_commands(base_commands)
 
-    # Override for each super admin
-    for admin_id in SUPER_ADMINS:
+    try:
+        users = get_all_users()
+    except Exception:
+        users = []
+
+    for u in users:
+        uid  = u["telegram_id"]
+        role = u.get("role", "agent")
         try:
-            await application.bot.set_my_commands(
-                super_commands,
-                scope=BotCommandScopeChat(chat_id=admin_id)
-            )
+            if can_manage_users(role):
+                await application.bot.set_my_commands(management_commands, scope=BotCommandScopeChat(chat_id=uid))
+            elif can_view_reports(role):
+                await application.bot.set_my_commands(elevated_commands, scope=BotCommandScopeChat(chat_id=uid))
         except Exception as e:
-            logger.warning(f"Could not set commands for super admin {admin_id}: {e}")
+            logger.warning(f"Could not set commands for user {uid}: {e}")
 
     me = await application.bot.get_me()
     logger.info(f"{BOT_NAME} started as @{me.username}")
@@ -99,11 +114,14 @@ async def post_init(application: Application) -> None:
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, ctx):
+    from storage.case_store import get_user, mark_user_started
     user = update.effective_user
-    if has_user_started(user.id):
+    u = get_user(user.id)
+    if u and u.get("started"):
         await update.message.reply_text("Already registered. Use /help for commands.")
         return
-    mark_user_started(user.id)
+    if u:
+        mark_user_started(user.id)
     await update.message.reply_text(
         f"Welcome to {BOT_NAME}!\n\n"
         f"{BOT_TAGLINE}\n\n"
@@ -116,12 +134,14 @@ async def cmd_start(update: Update, ctx):
 
 async def cmd_shifts(update: Update, ctx):
     from shift_manager import get_on_shift_admins, get_current_shift_name
+    from storage.case_store import get_user_role as _role
+    from roles import role_icon
     shift_name = get_current_shift_name()
     on_shift   = get_on_shift_admins()
     if on_shift:
         names = "\n".join(
-            f"  {a['name']} (@{a['username']})" if a['username']
-            else f"  {a['name']}"
+            f"  {role_icon(_role(a['id']))} {a['name']} (@{a['username']})" if a['username']
+            else f"  {role_icon(_role(a['id']))} {a['name']}"
             for a in on_shift
         )
         await update.message.reply_text(f"Shift: {shift_name}\n\nOn duty:\n{names}")
@@ -132,13 +152,15 @@ async def cmd_shifts(update: Update, ctx):
 
 
 async def cmd_help(update: Update, ctx):
-    user     = update.effective_user
-    is_super = _is_main_admin(user.id)
-    words    = "  ".join(TRIGGER_WORDS)
+    user  = update.effective_user
+    role  = get_user_role(user.id)
+    from roles import can_manage_users, can_view_reports, role_label, role_icon
+    words = "  ".join(TRIGGER_WORDS)
 
     text = (
         f"{BOT_NAME}\n"
         f"{BOT_TAGLINE}\n\n"
+        f"Your role: {role_icon(role)} {role_label(role)}\n\n"
         "Driver reporting — post in driver group:\n"
         f"{words}\n\n"
         "Example: #maintenance engine overheating, truck 42\n\n"
@@ -149,28 +171,25 @@ async def cmd_help(update: Update, ctx):
         "/shifts — Who is on duty\n"
     )
 
-    if is_super:
+    if can_view_reports(role):
         text += (
-            "\nSuper admin commands:\n"
+            "\nReporting commands:\n"
             "/report — Daily summary\n"
             "/leaderboard — Top performers\n"
             "/missed — Unhandled alerts\n"
         )
 
-    await update.message.reply_text(text)
-
-
-# ── Global error handler ──────────────────────────────────────────────────────
-
-async def on_error(update: object, ctx):
-    err = ctx.error
-    if isinstance(err, Conflict):
-        logger.warning(
-            "Telegram polling conflict detected (another instance is polling). "
-            "Ensure only one active bot instance for this token."
+    if can_manage_users(role):
+        text += (
+            "\nUser management:\n"
+            "/manageusers — Full management panel\n"
+            "/adduser — Add a user\n"
+            "/changerole — Change a user's role\n"
+            "/removeuser — Remove a user\n"
+            "/listusers — List all users\n"
         )
-        return
-    logger.exception("Unhandled exception while processing update", exc_info=err)
+
+    await update.message.reply_text(text)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -186,54 +205,54 @@ def main():
     )
 
     app.bot_data["alert_handler"] = alert_h
-    app.add_error_handler(on_error)
 
-    # Auth middleware — runs before everything
     app.add_handler(TypeHandler(Update, auth_middleware), group=-1)
 
-    # ── Commands ──────────────────────────────────────────────────────────────
-    app.add_handler(CommandHandler("start",        cmd_start))
-    app.add_handler(CommandHandler("shifts",       cmd_shifts))
-    app.add_handler(CommandHandler("help",         cmd_help))
+    app.add_handler(CommandHandler("start",       cmd_start))
+    app.add_handler(CommandHandler("shifts",      cmd_shifts))
+    app.add_handler(CommandHandler("help",        cmd_help))
 
-    # Agent commands
-    app.add_handler(CommandHandler("done",         cmd_done))
-    app.add_handler(CommandHandler("mycases",      cmd_mycases))
-    app.add_handler(CommandHandler("casehistory",  cmd_casehistory))
+    app.add_handler(CommandHandler("done",        cmd_done))
+    app.add_handler(CommandHandler("mycases",     cmd_mycases))
+    app.add_handler(CommandHandler("casehistory", cmd_casehistory))
 
-    # Admin commands (super admin only — enforced in handlers)
-    app.add_handler(CommandHandler("report",       cmd_report))
-    app.add_handler(CommandHandler("leaderboard",  cmd_leaderboard))
-    app.add_handler(CommandHandler("missed",       cmd_missed))
+    app.add_handler(CommandHandler("report",      cmd_report))
+    app.add_handler(CommandHandler("leaderboard", cmd_leaderboard))
+    app.add_handler(CommandHandler("missed",      cmd_missed))
 
-    # ── Conversation handlers (must be before standalone CallbackQueryHandlers)
+    app.add_handler(CommandHandler("manageusers", cmd_manageusers))
+    app.add_handler(CommandHandler("listusers",   cmd_listusers))
+    app.add_handler(CommandHandler("adduser",     cmd_adduser))
+    app.add_handler(CommandHandler("changerole",  cmd_changerole))
+    app.add_handler(CommandHandler("removeuser",  cmd_removeuser))
+    app.add_handler(CommandHandler("cancel",      cmd_cancel_add))
+    app.add_handler(CallbackQueryHandler(cb_manage, pattern=r'^mu_'))
+    app.add_handler(MessageHandler(
+        filters.ChatType.PRIVATE & (filters.TEXT | filters.FORWARDED) & ~filters.COMMAND,
+        recv_add_user,
+    ))
+
     app.add_handler(get_solve_conversation())
     app.add_handler(get_report_conversation())
 
-    # ── Trigger word detection ────────────────────────────────────────────────
-    trigger_pattern = '|'.join(TRIGGER_WORDS).replace('#', r'\#')
     app.add_handler(MessageHandler(
-        filters.ChatType.GROUPS &
-        (filters.TEXT | filters.PHOTO) &
-        filters.Regex(f'(?i)({trigger_pattern})'),
+        filters.ChatType.GROUPS & (filters.TEXT | filters.PHOTO),
         alert_h.handle
     ))
 
-    # ── Button callbacks ──────────────────────────────────────────────────────
     app.add_handler(CallbackQueryHandler(alert_h.handle_assignment, pattern=r'^(assign|assignrpt|ignore)\|'))
     app.add_handler(CallbackQueryHandler(alert_h.handle_reassign,   pattern=r'^reassign_'))
     app.add_handler(CallbackQueryHandler(cb_done_pick,      pattern=r'^done_pick\|'))
-    app.add_handler(CallbackQueryHandler(cb_solve_confirm,          pattern=r'^solve_confirm\|'))
-    app.add_handler(CallbackQueryHandler(cb_solve_cancel,           pattern=r'^solve_cancel\|'))
-    app.add_handler(CallbackQueryHandler(cb_close_confirm,          pattern=r'^close_confirm\|'))
-    app.add_handler(CallbackQueryHandler(cb_close_cancel,           pattern=r'^close_cancel\|'))
-    app.add_handler(CallbackQueryHandler(cb_delete_confirm,         pattern=r'^delete_confirm\|'))
-    app.add_handler(CallbackQueryHandler(cb_delete_do,              pattern=r'^delete_do\|'))
-    app.add_handler(CallbackQueryHandler(cb_delete_keep,            pattern=r'^delete_keep\|'))
-    app.add_handler(CallbackQueryHandler(cb_histpage,               pattern=r'^histpage\|'))
-    app.add_handler(CallbackQueryHandler(cb_hist_delete_chat,       pattern=r'^hist_delete_chat$'))
+    app.add_handler(CallbackQueryHandler(cb_solve_confirm,  pattern=r'^solve_confirm\|'))
+    app.add_handler(CallbackQueryHandler(cb_solve_cancel,   pattern=r'^solve_cancel\|'))
+    app.add_handler(CallbackQueryHandler(cb_close_confirm,  pattern=r'^close_confirm\|'))
+    app.add_handler(CallbackQueryHandler(cb_close_cancel,   pattern=r'^close_cancel\|'))
+    app.add_handler(CallbackQueryHandler(cb_delete_confirm, pattern=r'^delete_confirm\|'))
+    app.add_handler(CallbackQueryHandler(cb_delete_do,      pattern=r'^delete_do\|'))
+    app.add_handler(CallbackQueryHandler(cb_delete_keep,    pattern=r'^delete_keep\|'))
+    app.add_handler(CallbackQueryHandler(cb_histpage,       pattern=r'^histpage\|'))
+    app.add_handler(CallbackQueryHandler(cb_hist_delete_chat, pattern=r'^hist_delete_chat$'))
 
-    # ── Scheduled jobs ────────────────────────────────────────────────────────
     register_jobs(app)
 
     logger.info(f"Starting {BOT_NAME}...")

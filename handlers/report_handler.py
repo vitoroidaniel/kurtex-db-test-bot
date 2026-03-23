@@ -90,6 +90,11 @@ def _esc(text) -> str:
     return text
 
 
+def _needs_temp(vtype: str) -> bool:
+    """Only Reefer gets temperature questions — not Trailer."""
+    return vtype == "reefer"
+
+
 def _build_report(d: dict) -> str:
     vtype        = d.get("vehicle_type", "truck")
     priority_key = d.get("priority", "low")
@@ -115,7 +120,8 @@ def _build_report(d: dict) -> str:
         f"*Current Location:* {_esc(d.get('location', '—'))}",
     ]
 
-    if vtype in ("trailer", "reefer"):
+    # Temperature info only for Reefer
+    if _needs_temp(vtype):
         lines += [
             "",
             f"*Setpoint:* {_esc(d.get('setpoint', '—'))}",
@@ -130,9 +136,8 @@ def _build_report(d: dict) -> str:
     return "\n".join(lines)
 
 
-
 async def cb_report_entry(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Entry point from Report button (solve|case_id). Stores handler info and shows vehicle selector."""
+    """Entry point from Report button (solve|case_id)."""
     query   = update.callback_query
     await query.answer()
     case_id = query.data.split("|")[1]
@@ -143,7 +148,6 @@ async def cb_report_entry(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("This case is no longer active.", reply_markup=None)
         return ConversationHandler.END
 
-    # Block if agent is mid-report on another case
     existing_case_id = ctx.user_data.get("report_case_id")
     if existing_case_id and existing_case_id != case_id:
         existing = get_case(existing_case_id)
@@ -151,7 +155,6 @@ async def cb_report_entry(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await query.answer("Finish your current report first.", show_alert=True)
             return ConversationHandler.END
 
-    # Store handler name and case_id
     user = update.effective_user
     handler_name = f"{user.first_name} {user.last_name or ''}".strip()
     ctx.user_data["report_case_id"] = case_id
@@ -173,6 +176,7 @@ async def cb_report_entry(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ]])
     )
     return ASK_TYPE
+
 
 async def cb_type(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -246,9 +250,12 @@ async def recv_delivery(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def recv_location(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data["report"]["location"] = update.message.text.strip()
     vtype = ctx.user_data["report"].get("vehicle_type", "truck")
-    if vtype in ("trailer", "reefer"):
+
+    # Temperature questions only for Reefer — skip entirely for Truck/Trailer
+    if _needs_temp(vtype):
         await update.message.reply_text("Setpoint temperature (e.g. -10°C):", reply_markup=SKIP_KB)
         return ASK_SETPOINT
+
     await update.message.reply_text("Comments:", reply_markup=SKIP_KB)
     return ASK_COMMENTS
 
@@ -326,6 +333,7 @@ async def cb_skip(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query  = update.callback_query
     await query.answer()
     report = ctx.user_data.get("report", {})
+    vtype  = report.get("vehicle_type", "truck")
 
     if "load" not in report:
         report["load"] = "—"
@@ -341,10 +349,10 @@ async def cb_skip(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return ASK_LOCATION
     elif "location" not in report:
         report["location"] = "—"
-        vtype = report.get("vehicle_type", "truck")
-        if vtype in ("trailer", "reefer"):
+        if _needs_temp(vtype):
             await query.edit_message_text("Setpoint temperature:", reply_markup=SKIP_KB)
             return ASK_SETPOINT
+        # Trailer/Truck skip straight to comments
         report["comments"] = None
         await query.edit_message_text(
             "Send photo(s) or video(s), or press Done:",
@@ -477,7 +485,6 @@ async def cmd_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-
 async def _show_preview(target, ctx, edit=True):
     report  = ctx.user_data.get("report", {})
     preview = _build_report(report)
@@ -503,7 +510,7 @@ def _edit_fields_kb(vtype: str) -> InlineKeyboardMarkup:
         ("Comments",      "rpt_editfield|comments"),
         ("Priority",      "rpt_editfield|priority"),
     ]
-    if vtype in ("trailer", "reefer"):
+    if _needs_temp(vtype):
         fields[7:7] = [
             ("Setpoint",      "rpt_editfield|setpoint"),
             ("Current temp",  "rpt_editfield|current_temp"),
@@ -577,6 +584,7 @@ async def recv_edit_value(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ctx.user_data["report"]["unit_number" if field == "unit" else field] = value
     await _show_preview(update.message, ctx, edit=False)
     return CONFIRM
+
 
 def get_report_conversation():
     text_only    = filters.TEXT & ~filters.COMMAND

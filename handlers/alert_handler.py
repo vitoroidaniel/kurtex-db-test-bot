@@ -3,8 +3,9 @@ handlers/alert_handler.py
 """
 import asyncio
 import logging
+import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -15,7 +16,7 @@ from storage import case_store
 
 logger = logging.getLogger(__name__)
 
-TRIGGER_WORDS = ['#maintenance', '#repairs', '#breakdown', '#problem', '#help', '#emergency', '#repair']
+TRIGGER_WORDS = ['#maintenance', '#repairs', 'repair']
 
 # Minimum seconds between alerts from the same driver (prevents spam)
 COOLDOWN_SECONDS = 10
@@ -66,13 +67,16 @@ class AlertHandler:
         text  = msg.text or msg.caption or ""
         photo = msg.photo[-1] if msg.photo else None
 
-        matched = next((w for w in TRIGGER_WORDS if w.lower() in text.lower()), None)
+        # Strip @mentions from text before checking trigger words.
+        clean_text = re.sub(r'@\w+', '', text)
+
+        matched = next((w for w in TRIGGER_WORDS if w.lower() in clean_text.lower()), None)
         if not matched:
             return
 
         user      = update.effective_user
         driver_id = user.id
-        now       = datetime.now()
+        now       = datetime.now(timezone.utc)
 
         # Simple cooldown — only one alert per driver per COOLDOWN_SECONDS
         last_time = self._driver_last_time.get(driver_id)
@@ -128,6 +132,11 @@ class AlertHandler:
             logger.warning("No admins could be reached!")
 
     def _new_alert(self, alert_id, driver_id, user, chat_title, text, now):
+        # Cap in-memory alert store to avoid unbounded growth
+        if len(self._alerts) > 500:
+            oldest_key = next(iter(self._alerts))
+            self._alerts.pop(oldest_key, None)
+            logger.debug("Alert store pruned (500 cap)")
         self._alerts[alert_id] = {
             "recipients":      {},
             "taken_by":        None,
@@ -163,6 +172,8 @@ class AlertHandler:
             alert_id = uuid_match.group(0)
             if alert_id in self._processed_ai_ids:
                 return
+            if len(self._processed_ai_ids) > 1000:
+                self._processed_ai_ids.clear()
             self._processed_ai_ids.add(alert_id)
 
             driver_name = "Unknown"
@@ -300,10 +311,9 @@ class AlertHandler:
         if dest_id:
             report = (
                 f"✅ *Case Assigned*\n\n"
-                f"📌 *Group:* {record.get('group_name', '—')}\n"
-                f"👤 *Driver:* {record.get('driver_name', '—')}\n"
-                f"🙋 *Handler:* {name}\n"
-                f"📝 {record.get('text', '(no details)')}"
+                f"👤 *Reported by:* {record.get('driver_name', '—')}\n"
+                f"🙋 *Assigned to:* {name}\n"
+                f"📝 *Issue:* {(record.get('text') or '—')[:200]}"
             )
             try:
                 await ctx.bot.send_message(dest_id, report, parse_mode=ParseMode.MARKDOWN)
@@ -357,10 +367,23 @@ class AlertHandler:
                 return
 
             if action in ("assign", "assignrpt"):
+                from storage.case_store import get_case as _get_case
+                case = _get_case(alert_id)
+                case_text = (
+                    f"📋 *Active Case*\n\n"
+                    f"📌 *Group:* {saved_record.get('group_name', '—')}\n"
+                    f"👤 *Driver:* {saved_record.get('driver_name', '—')}\n"
+                    f"📝 *Issue:* {(saved_record.get('text') or '—')[:200]}"
+                )
+                case_kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("✅ Solve",  callback_data=f"close_ask|{alert_id}"),
+                    InlineKeyboardButton("📋 Report", callback_data=f"solve|{alert_id}"),
+                ]])
                 try:
                     await ctx.bot.send_message(
-                        admin.id,
-                        "✅ Case has been assigned to you.\nUse /mycases to view and take action.",
+                        admin.id, case_text,
+                        parse_mode=ParseMode.MARKDOWN,
+                        reply_markup=case_kb,
                     )
                 except TelegramError:
                     pass
