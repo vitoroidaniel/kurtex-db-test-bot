@@ -257,9 +257,9 @@ async def recv_location(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return ASK_SETPOINT
 
     # Trailer/Truck — pre-fill temp fields, go to comments then media
-    report["setpoint"] = "—"
-    report["current_temp"] = "—"
-    report["temp_recorder"] = "—"
+    ctx.user_data["report"]["setpoint"] = "—"
+    ctx.user_data["report"]["current_temp"] = "—"
+    ctx.user_data["report"]["temp_recorder"] = "—"
     await update.message.reply_text("Comments:", reply_markup=SKIP_KB)
     return ASK_COMMENTS
 
