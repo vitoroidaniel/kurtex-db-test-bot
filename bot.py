@@ -226,14 +226,14 @@ def main():
     app.add_handler(CommandHandler("changerole",  cmd_changerole))
     app.add_handler(CommandHandler("removeuser",  cmd_removeuser))
     app.add_handler(CommandHandler("cancel",      cmd_cancel_add))
+    app.add_handler(get_solve_conversation())
+    app.add_handler(get_report_conversation())
+
     app.add_handler(CallbackQueryHandler(cb_manage, pattern=r'^mu_'))
     app.add_handler(MessageHandler(
         filters.ChatType.PRIVATE & (filters.TEXT | filters.FORWARDED) & ~filters.COMMAND,
         recv_add_user,
     ))
-
-    app.add_handler(get_solve_conversation())
-    app.add_handler(get_report_conversation())
 
     app.add_handler(MessageHandler(
         filters.ChatType.GROUPS & (filters.TEXT | filters.PHOTO),

@@ -16,10 +16,10 @@ from storage import case_store
 
 logger = logging.getLogger(__name__)
 
-TRIGGER_WORDS = ['#maintenance', '#repairs', 'repair']
+TRIGGER_WORDS = ['#maintenance', '#repairs', '#repair']
 
 # Minimum seconds between alerts from the same driver (prevents spam)
-COOLDOWN_SECONDS = 10
+COOLDOWN_SECONDS = 5
 
 
 async def _delete_after(bot, chat_id, message_id, seconds):
@@ -90,7 +90,7 @@ class AlertHandler:
 
         dm_text = (
             "\U0001f514 You have been mentioned in *" + chat_title + "*\n\n"
-            "\U0001f464 *Driver:* " + driver_name + "\n"
+            "\U0001f464 *Reported by:* " + driver_name + "\n"
             "\U0001f4dd *Issue:* " + text[:200]
         )
 
@@ -372,7 +372,7 @@ class AlertHandler:
                 case_text = (
                     f"📋 *Active Case*\n\n"
                     f"📌 *Group:* {saved_record.get('group_name', '—')}\n"
-                    f"👤 *Driver:* {saved_record.get('driver_name', '—')}\n"
+                    f"👤 *Reported by:* {saved_record.get('driver_name', '—')}\n"
                     f"📝 *Issue:* {(saved_record.get('text') or '—')[:200]}"
                 )
                 case_kb = InlineKeyboardMarkup([[

@@ -111,7 +111,7 @@ def _build_report(d: dict) -> str:
         f"Priority: *{p['level']}*",
         "",
         unit_line,
-        f"*Driver:* {_esc(d.get('driver', '—'))}",
+        f"*Reported by:* {_esc(d.get('driver', '—'))}",
         f"*Issue:* {_esc(d.get('issue', '—'))}",
         "",
         f"*JBS/Broker Load:* {_esc(d.get('load', '—'))}",
@@ -165,7 +165,7 @@ async def cb_report_entry(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text(
         f"📋 *Report*\n\n"
-        f"Driver: {case['driver_name']} — {case['group_name']}\n"
+        f"Reported by: {case['driver_name']} — {case['group_name']}\n"
         f"Issue: {(case.get('description') or '')[:80]}\n\n"
         "Select vehicle type:",
         parse_mode="Markdown",
@@ -256,6 +256,10 @@ async def recv_location(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Setpoint temperature (e.g. -10°C):", reply_markup=SKIP_KB)
         return ASK_SETPOINT
 
+    # Trailer/Truck — pre-fill temp fields, go to comments then media
+    report["setpoint"] = "—"
+    report["current_temp"] = "—"
+    report["temp_recorder"] = "—"
     await update.message.reply_text("Comments:", reply_markup=SKIP_KB)
     return ASK_COMMENTS
 
@@ -352,18 +356,20 @@ async def cb_skip(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if _needs_temp(vtype):
             await query.edit_message_text("Setpoint temperature:", reply_markup=SKIP_KB)
             return ASK_SETPOINT
-        # Trailer/Truck skip straight to comments
-        report["comments"] = None
+        # Trailer/Truck — pre-fill temp fields and skip to media
+        report["setpoint"] = "—"
+        report["current_temp"] = "—"
+        report["temp_recorder"] = "—"
         await query.edit_message_text(
             "Send photo(s) or video(s), or press Done:",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Done (no media)", callback_data="rpt_mediadone")]])
         )
         return ASK_MEDIA
-    elif "setpoint" not in report:
+    elif "setpoint" not in report and _needs_temp(vtype):
         report["setpoint"] = "—"
         await query.edit_message_text("Current temperature:", reply_markup=SKIP_KB)
         return ASK_CURRENT_TEMP
-    elif "current_temp" not in report:
+    elif "current_temp" not in report and _needs_temp(vtype):
         report["current_temp"] = "—"
         await query.edit_message_text(
             "Temp recorder: Y or N?",
@@ -636,7 +642,7 @@ def get_report_conversation():
         },
         fallbacks=[CommandHandler("cancel", cmd_cancel)],
         per_message=False,
-        per_chat=False,
+        per_chat=True,
         per_user=True,
         allow_reentry=True,
     )

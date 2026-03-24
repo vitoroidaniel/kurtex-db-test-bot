@@ -74,7 +74,7 @@ def is_known_user(telegram_id: int) -> bool:
         from storage.case_store import is_agent
         return is_agent(telegram_id)
     except Exception:
-        return telegram_id in SUPER_ADMINS
+        return telegram_id in SUPER_ADMINS or telegram_id in MAIN_ADMIN_ID
 
 
 def is_super_admin(telegram_id: int) -> bool:
